@@ -1,0 +1,176 @@
+diff --git a/ChatBar/ChatBarPanel.swift b/ChatBar/ChatBarPanel.swift
+index 7c33a8f..ff81e69 100644
+--- a/ChatBar/ChatBarPanel.swift
++++ b/ChatBar/ChatBarPanel.swift
+@@ -60,6 +60,7 @@ final class ChatBarPanel: NSPanel, NSWindowDelegate {
+     private var pendingConversationExpansion = false
+     private var positionSaveWork: DispatchWorkItem?
+     private var sizeSaveWork: DispatchWorkItem?
++    private var keepChatBarVisible = true
+     private var clickOutsideMonitor: Any?
+     private weak var webViewModel: WebViewModel?
+     private var glassEffectView: ChatBarGlassEffectView?
+@@ -140,6 +141,11 @@ final class ChatBarPanel: NSPanel, NSWindowDelegate {
+ 
+     private func configureWindow() {
+         isFloatingPanel = true
++        setKeepChatBarVisible(
++            (UserDefaults.standard.object(
++                forKey: UserDefaultsKeys.keepChatBarVisible.rawValue
++            ) as? Bool) ?? true
++        )
+         level = .floating
+         isMovable = true
+         isMovableByWindowBackground = false
+@@ -163,15 +169,27 @@ final class ChatBarPanel: NSPanel, NSWindowDelegate {
+ 
+     }
+ 
++    /// Updates an already-created panel without presenting it or taking focus.
++    func setKeepChatBarVisible(_ keepVisible: Bool) {
++        keepChatBarVisible = keepVisible
++        hidesOnDeactivate = !keepVisible
++        if keepVisible {
++            removeClickOutsideMonitor()
++        } else if shouldDismissOnToggle, isVisible {
++            installClickOutsideMonitor()
++        }
++    }
++
+     /// Installed only while the panel is on screen. A monitor left armed keeps
+     /// waking the app for every click anywhere in the system, and the panel is
+     /// cached for the app's lifetime, so `deinit` is not a timely teardown.
+     private func installClickOutsideMonitor() {
+-        guard clickOutsideMonitor == nil else { return }
++        guard !keepChatBarVisible, clickOutsideMonitor == nil else { return }
+         clickOutsideMonitor = NSEvent.addGlobalMonitorForEvents(
+             matching: .leftMouseDown
+         ) { [weak self] _ in
+-            guard let self, self.isVisible else { return }
++            guard let self, !self.keepChatBarVisible,
++                  self.shouldDismissOnToggle, self.isVisible else { return }
+             self.onRequestDismiss()
+         }
+     }
+diff --git a/Coordinators/AppCoordinator.swift b/Coordinators/AppCoordinator.swift
+index 494a13f..19bfc7b 100644
+--- a/Coordinators/AppCoordinator.swift
++++ b/Coordinators/AppCoordinator.swift
+@@ -250,6 +250,10 @@ final class AppCoordinator {
+         return bar
+     }
+ 
++    func setKeepChatBarVisible(_ keepVisible: Bool) {
++        chatBar?.setKeepChatBarVisible(keepVisible)
++    }
++
+     func resetChatBarPosition() {
+         chatBar?.positionForPresentation(force: true)
+     }
+diff --git a/README.md b/README.md
+index 64dd203..1a8fc0f 100644
+--- a/README.md
++++ b/README.md
+@@ -47,6 +47,7 @@ idea: the smallest thing that can sit between you and three very large web apps.
+ - Find, back, forward, reload, sidebar, zoom, and always-on-top controls
+ - Customizable native toolbar
+ - Floating Chat Bar with global shortcuts
++- Keep Chat Bar Visible (on by default): stays floating while other apps are active, allowing file drag-and-drop; turn it off in Settings → Chat Bar to restore click-away dismissal
+ - Light, dark, and system themes
+ - Shared text size for the main window and Chat Bar
+ - Launch at login, optional hidden Dock icon, and optional hidden launch window
+diff --git a/Tests/ProviderArchitectureTests.swift b/Tests/ProviderArchitectureTests.swift
+index 172ac9f..562106a 100644
+--- a/Tests/ProviderArchitectureTests.swift
++++ b/Tests/ProviderArchitectureTests.swift
+@@ -877,3 +877,50 @@ final class SelectionCaptureDeliveryTests: XCTestCase {
+         wait(for: [delivered], timeout: 0.3)
+     }
+ }
++
++final class ChatBarPersistenceTests: XCTestCase {
++    @MainActor
++    func testPersistentDefaultAndLegacyPreferenceOnRecreatedPanel() {
++        _ = NSApplication.shared
++        let defaults = UserDefaults.standard
++        let key = UserDefaultsKeys.keepChatBarVisible.rawValue
++        let previousPreference = defaults.object(forKey: key)
++        let previousProvider = defaults.object(forKey: LLMProvider.defaultsKey)
++        defer {
++            if let previousPreference { defaults.set(previousPreference, forKey: key) }
++            else { defaults.removeObject(forKey: key) }
++            if let previousProvider { defaults.set(previousProvider, forKey: LLMProvider.defaultsKey) }
++            else { defaults.removeObject(forKey: LLMProvider.defaultsKey) }
++        }
++
++        let model = WebViewModel(provider: .chatgpt)
++        model.wkWebView.stopLoading()
++        func makePanel() -> ChatBarPanel {
++            ChatBarPanel(contentView: NSView(), webViewModel: model, onRequestDismiss: {})
++        }
++
++        defaults.removeObject(forKey: key)
++        let panel = makePanel()
++        XCTAssertFalse(panel.hidesOnDeactivate)
++        XCTAssertTrue(panel.isFloatingPanel)
++        XCTAssertEqual(panel.level, .floating)
++        XCTAssertFalse(panel.shouldDismissOnToggle)
++
++        // Changing the preference must not summon a hidden panel or take focus.
++        panel.setKeepChatBarVisible(false)
++        XCTAssertTrue(panel.hidesOnDeactivate)
++        XCTAssertFalse(panel.isVisible)
++        panel.setKeepChatBarVisible(true)
++        XCTAssertFalse(panel.hidesOnDeactivate)
++        XCTAssertFalse(panel.isVisible)
++
++        // A panel recreated after idle release must respect explicit false.
++        defaults.set(false, forKey: key)
++        let legacyPanel = makePanel()
++        XCTAssertTrue(legacyPanel.hidesOnDeactivate)
++        panel.dismissImmediately()
++        XCTAssertTrue(panel.isReleasableWhenIdle)
++        panel.close()
++        legacyPanel.close()
++    }
++}
+diff --git a/Utils/UserDefaultsKeys.swift b/Utils/UserDefaultsKeys.swift
+index c7b6e5a..8215e89 100644
+--- a/Utils/UserDefaultsKeys.swift
++++ b/Utils/UserDefaultsKeys.swift
+@@ -17,6 +17,8 @@ enum UserDefaultsKeys: String {
+     case hideWindowAtLaunch
+     case hideDockIcon
+     case appTheme
++    /// Missing means persistent; false restores click-away dismissal.
++    case keepChatBarVisible
+     case panelPosition
+     case panelX
+     case panelY
+diff --git a/Views/Settings/ChatBarSettingsSections.swift b/Views/Settings/ChatBarSettingsSections.swift
+index 1681248..bc9b5ac 100644
+--- a/Views/Settings/ChatBarSettingsSections.swift
++++ b/Views/Settings/ChatBarSettingsSections.swift
+@@ -15,6 +15,9 @@ struct ChatBarSettingsSections: View {
+     @AppStorage(UserDefaultsKeys.captureSelectedText.rawValue)
+     private var captureSelectedText = false
+ 
++    @AppStorage(UserDefaultsKeys.keepChatBarVisible.rawValue)
++    private var keepChatBarVisible = true
++
+     @State private var isAccessibilityTrusted = false
+ 
+     var body: some View {
+@@ -34,6 +37,12 @@ struct ChatBarSettingsSections: View {
+                 coordinator.resetChatBarPosition()
+             }
+ 
++            Toggle("Keep Chat Bar Visible", isOn: $keepChatBarVisible)
++                .help("Keep the Chat Bar open while using other apps so you can drag files into it. Use the Chat Bar shortcut to hide it. Turn this off to dismiss it when clicking another app.")
++                .onChange(of: keepChatBarVisible) { _, newValue in
++                    coordinator.setKeepChatBarVisible(newValue)
++                }
++
+             KeyboardShortcuts.Recorder("Keyboard Shortcut", name: .bringToFront)
+         }
+ 
