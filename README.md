@@ -4,7 +4,9 @@ This package contains a manually triggered GitHub Actions workflow plus the
 persistent Chat Bar patch. It clones Thinspace at the exact upstream commit,
 applies the patch, builds on GitHub's Apple silicon `xcode-27` preview runner,
 runs ThinspaceTests, ad-hoc signs the app, and uploads a ZIP if all steps pass.
-It has not been submitted to GitHub or executed yet.
+Cloud build succeeded on October 8, 2026 (Asia/Jakarta). All 46 native tests passed, including the added Chat Bar persistence regression. Download the app from the successful run’s Artifacts section: https://github.com/indrabuilds/thinspace-persistent-build/actions/runs/37702370938
+
+The repository is public as requested; the earlier private run was cancelled.
 
 ## Run through GitHub's website
 
