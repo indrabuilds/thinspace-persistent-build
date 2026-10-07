@@ -1,0 +1,79 @@
+name: Build Thinspace Persistent
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch pinned upstream and apply persistent-mode patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/0ssamaak0/Thinspace.git source
+          git -C source checkout --detach eefd70060f8492d98b77e62550efebd3ab64f5b4
+          git -C source apply --check "$GITHUB_WORKSPACE/thinspace-persistent-chat-bar.patch"
+          git -C source apply "$GITHUB_WORKSPACE/thinspace-persistent-chat-bar.patch"
+      - name: Verify build environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          sw_vers
+          xcodebuild -version
+          xcodebuild -showsdks
+          test "$(uname -m)" = arm64
+          xcodebuild -showsdks | grep -q 'macosx27'
+      - name: Build Release app
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -project Thinspace.xcodeproj -scheme Thinspace \
+            -configuration Release -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath build/DerivedData ARCHS=arm64 CODE_SIGNING_ALLOWED=NO \
+            build 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+      - name: Run native regression suite
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild test -project Thinspace.xcodeproj -scheme Thinspace \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath build/DerivedData -resultBundlePath build/Tests.xcresult \
+            -only-testing:ThinspaceTests CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee "$GITHUB_WORKSPACE/tests.log"
+      - name: Package app with local ad-hoc signature
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path=build/DerivedData/Build/Products/Release/Thinspace.app
+          test -x "$app_path/Contents/MacOS/Thinspace"
+          codesign --force --sign - --options runtime \
+            --entitlements Resources/Thinspace.entitlements "$app_path"
+          codesign --verify --strict "$app_path"
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          ditto -c -k --keepParent "$app_path" "$GITHUB_WORKSPACE/dist/Thinspace-Persistent.zip"
+          cp LICENSE "$GITHUB_WORKSPACE/dist/LICENSE"
+          shasum -a 256 "$GITHUB_WORKSPACE/dist/Thinspace-Persistent.zip" > "$GITHUB_WORKSPACE/dist/SHA256.txt"
+      - name: Upload installable app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Thinspace-Persistent-macOS-arm64
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload build and test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Thinspace-build-diagnostics
+          path: |
+            build.log
+            tests.log
+            source/build/Tests.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
