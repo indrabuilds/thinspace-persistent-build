@@ -43,8 +43,16 @@ jobs:
           xcodebuild test -project Thinspace.xcodeproj -scheme Thinspace \
             -destination 'platform=macOS,arch=arm64' \
             -derivedDataPath build/DerivedData -resultBundlePath build/Tests.xcresult \
-            -only-testing:ThinspaceTests CODE_SIGNING_ALLOWED=NO \
+            -only-testing:ThinspaceTests -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO \
             2>&1 | tee "$GITHUB_WORKSPACE/tests.log"
+      - name: Export native test failure details
+        if: always()
+        shell: bash
+        run: |
+          if [ -d source/build/Tests.xcresult ]; then
+            xcrun xcresulttool get test-results summary --path source/build/Tests.xcresult > test-summary.json
+            cat test-summary.json
+          fi
       - name: Package app with local ad-hoc signature
         working-directory: source
         shell: bash
@@ -74,6 +82,7 @@ jobs:
           path: |
             build.log
             tests.log
+            test-summary.json
             source/build/Tests.xcresult
           if-no-files-found: ignore
           retention-days: 30
