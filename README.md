@@ -14,3 +14,9 @@ Pinned upstream: `9a2ab018a8656c5a086b375de07b553484dba954`.
 Original project: https://github.com/0ssamaak0/Thinspace
 Original LICENSE and attribution are preserved. Noncommercial adaptation.
 No account data or conversations are included in this repository.
+
+## Verified edge-to-edge build
+
+Build 2026101903 passed all 55 tests (zero failures):
+https://github.com/indrabuilds/thinspace-persistent-build/actions/runs/39185084068
+Download Thinspace-Persistent-EdgeToEdge.zip from the run’s Artifacts.
