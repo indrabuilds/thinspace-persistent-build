@@ -53,10 +53,10 @@ index 8d053f5..b2263c6 100644
          }
      }
 diff --git a/ChatBar/ChatBarView.swift b/ChatBar/ChatBarView.swift
-index 7284470..89de712 100644
+index 7284470..55dc29d 100644
 --- a/ChatBar/ChatBarView.swift
 +++ b/ChatBar/ChatBarView.swift
-@@ -59,41 +59,33 @@ struct ChatBarView: View {
+@@ -59,41 +59,34 @@ struct ChatBarView: View {
      let onExpandToMain: () -> Void
  
      var body: some View {
@@ -111,6 +111,7 @@ index 7284470..89de712 100644
 +            .background(.ultraThinMaterial)
 +
 +            BrowserWebView(webViewModel: webViewModel)
++                .frame(maxWidth: .infinity, maxHeight: .infinity)
          }
      }
  
@@ -156,7 +157,7 @@ index 64dd203..c84317a 100644
  
  **Big AI. Very little app.**
 diff --git a/Tests/ProviderArchitectureTests.swift b/Tests/ProviderArchitectureTests.swift
-index fbd411b..3545cec 100644
+index fbd411b..88b0fa4 100644
 --- a/Tests/ProviderArchitectureTests.swift
 +++ b/Tests/ProviderArchitectureTests.swift
 @@ -9,40 +9,61 @@ import JavaScriptCore
@@ -234,7 +235,7 @@ index fbd411b..3545cec 100644
      }
  }
  
-@@ -912,3 +933,99 @@ final class SelectionCaptureDeliveryTests: XCTestCase {
+@@ -912,3 +933,105 @@ final class SelectionCaptureDeliveryTests: XCTestCase {
          wait(for: [delivered], timeout: 0.3)
      }
  }
@@ -303,7 +304,12 @@ index fbd411b..3545cec 100644
 +        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 500, height: 300),
 +                              styleMask: [.titled], backing: .buffered, defer: false)
 +        window.isReleasedWhenClosed = false
++        host.sizingOptions = []
++        host.frame = NSRect(x: 0, y: 0, width: 500, height: 300)
++        host.autoresizingMask = [.width, .height]
 +        window.contentView = host
++        window.setContentSize(NSSize(width: 500, height: 300))
++        NSApp.activate(ignoringOtherApps: true)
 +        window.makeKeyAndOrderFront(nil)
 +        let laidOut = expectation(description: "SwiftUI and WebKit layout")
 +        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { laidOut.fulfill() }
@@ -318,6 +324,7 @@ index fbd411b..3545cec 100644
 +        XCTAssertEqual(dragViews.count, 1)
 +        let web = model.wkWebView
 +        let webRect = host.convert(web.bounds, from: web)
++        print("Chat Bar hit-test geometry: host=\(host.bounds), web=\(webRect), attached=\(web.superview != nil)")
 +        XCTAssertGreaterThan(webRect.height, 200)
 +        for drag in dragViews {
 +            let dragRect = host.convert(drag.bounds, from: drag)
