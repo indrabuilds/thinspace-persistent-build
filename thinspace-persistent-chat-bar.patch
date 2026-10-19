@@ -1,5 +1,5 @@
 diff --git a/ChatBar/ChatBarPanel.swift b/ChatBar/ChatBarPanel.swift
-index 8d053f5..e8cc928 100644
+index 8d053f5..41ffdf8 100644
 --- a/ChatBar/ChatBarPanel.swift
 +++ b/ChatBar/ChatBarPanel.swift
 @@ -63,20 +63,24 @@ final class ChatBarPanel: NSPanel, NSWindowDelegate {
@@ -92,7 +92,7 @@ index 8d053f5..e8cc928 100644
          if key == "n", modifiers == [.command] {
              webViewModel?.openNewChat()
              resetToInitialSize()
-@@ -709,6 +736,59 @@ extension ChatBarPanel {
+@@ -709,6 +736,61 @@ extension ChatBarPanel {
      }
  }
  
@@ -100,6 +100,8 @@ index 8d053f5..e8cc928 100644
 +/// Hit testing inside the content box always stays with the webpage.
 +final class ChatBarEdgeView: NSView {
 +    var onExpand: (() -> Void)?
++
++    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 +
 +    override func resetCursorRects() {
 +        super.resetCursorRects()
@@ -316,7 +318,7 @@ index 64dd203..34a0a6a 100644
  
  **Big AI. Very little app.**
 diff --git a/Tests/ProviderArchitectureTests.swift b/Tests/ProviderArchitectureTests.swift
-index fbd411b..e1c3205 100644
+index fbd411b..f01318b 100644
 --- a/Tests/ProviderArchitectureTests.swift
 +++ b/Tests/ProviderArchitectureTests.swift
 @@ -9,40 +9,61 @@ import JavaScriptCore
@@ -394,7 +396,7 @@ index fbd411b..e1c3205 100644
      }
  }
  
-@@ -912,3 +933,146 @@ final class SelectionCaptureDeliveryTests: XCTestCase {
+@@ -912,3 +933,147 @@ final class SelectionCaptureDeliveryTests: XCTestCase {
          wait(for: [delivered], timeout: 0.3)
      }
  }
@@ -519,6 +521,7 @@ index fbd411b..e1c3205 100644
 +            XCTFail("Missing existing glass edge container")
 +            return
 +        }
++        XCTAssertTrue(edge.acceptsFirstMouse(for: nil), "The edge should respond while another app is active")
 +        let rim = ChatBarPanel.Constants.glassRimWidth
 +        XCTAssertEqual(hostedContent.frame.minX, rim, accuracy: 0.5)
 +        XCTAssertEqual(hostedContent.frame.minY, rim, accuracy: 0.5)
