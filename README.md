@@ -1,44 +1,16 @@
-# Build Thinspace without local Xcode
+# Thinspace Persistent — 1.2.2 custom build 20261019
 
-This package contains a manually triggered GitHub Actions workflow plus the
-persistent Chat Bar patch. It clones Thinspace at the exact upstream commit,
-applies the patch, builds on GitHub's Apple silicon `xcode-27` preview runner,
-runs ThinspaceTests, ad-hoc signs the app, and uploads a ZIP if all steps pass.
-Cloud build succeeded on October 8, 2026 (Asia/Jakarta). All 46 native tests passed, including the added Chat Bar persistence regression. Download the app from the successful run’s Artifacts section: https://github.com/indrabuilds/thinspace-persistent-build/actions/runs/37702370938
+Updated from upstream 0ssamaak0/Thinspace at `9a2ab018a8656c5a086b375de07b553484dba954`.
 
-The repository is public as requested; the earlier private run was cancelled.
+- Keep Chat Bar Visible restored, enabled by default. Option+Space still explicitly hides/shows.
+- Ordinary hidden sessions remain loaded for two hours instead of fifteen minutes.
+- Detected Temporary/private Chats are exempt from automatic idle unloading while the app runs.
+- Native drag/expand controls sit in their own header above the webpage, leaving Work and other webpage buttons clickable.
+- Command+Shift+N retains the existing Temporary Chat handler.
 
-## Run through GitHub's website
+This does not preserve a session across quitting, provider switches, manual reload/navigation, website session expiry, or macOS/WebKit process termination. No private conversations are saved to disk and no artificial keep-alive requests are sent.
 
-1. Sign in to GitHub and create an empty repository. A public repository uses
-   GitHub's free standard hosted runners. A private repository uses your account's
-   included Actions minutes and may incur charges beyond those minutes.
-2. Upload `thinspace-persistent-chat-bar.patch` to the repository root.
-3. Create a file named `.github/workflows/build-thinspace.yml` using GitHub's
-   Add file → Create new file control. Paste the contents of the supplied YAML
-   file and commit it to the default branch. Hidden folders are sometimes omitted
-   by web uploads, so creating this file explicitly avoids that problem.
-4. Open Actions → Build Thinspace Persistent → Run workflow.
-5. Wait for success, then download `Thinspace-Persistent-macOS-arm64` from the
-   run's Artifacts section. If it fails, download the diagnostics or inspect the
-   failed step; no successful build is assumed before this finishes.
-6. Extract the artifact, then extract its `Thinspace-Persistent.zip`.
-7. Quit existing Thinspace instances. Rename the extracted app to
-   `Thinspace Persistent.app`, drag it into Applications, and open it.
-8. Because this is an ad-hoc signed build, macOS may require approval through
-   System Settings → Privacy & Security → Open Anyway. It is not notarized.
-9. Leave Settings → Chat Bar → Keep Chat Bar Visible enabled, then test Finder
-   drag-and-drop, Option+Space show/hide, and Command+Shift+N Temporary Chat.
+Run the manually triggered Build Thinspace Persistent workflow. It applies the patch to pinned upstream, builds, tests, ad-hoc signs, and uploads Thinspace-Persistent-1.2.2.zip. Build artifacts are retained for thirty days. The repository contains only the open-source patch, workflow, and instructions; no accounts or sessions.
 
-No Apple Developer certificate, ChatGPT login, or account secret is uploaded.
-The build runner compiles the app; use your ChatGPT account only after installing
-it on your own Mac. A CI build does not verify interactive ChatGPT file uploads.
-
-Thinspace upstream: https://github.com/0ssamaak0/Thinspace
-Base: eefd70060f8492d98b77e62550efebd3ab64f5b4
-Changes: persistent Chat Bar setting, default on, with legacy dismissal available.
-Upstream attribution and LICENSE are retained. Noncommercial adaptation.
-
-Runner documentation:
-https://docs.github.com/en/actions/reference/runners/github-hosted-runners
-https://github.com/actions/runner-images/blob/main/images/macos/xcode-27-arm64-Readme.md
+Original Thinspace: https://github.com/0ssamaak0/Thinspace
+Original attribution and LICENSE are preserved in the build package. Noncommercial adaptation.

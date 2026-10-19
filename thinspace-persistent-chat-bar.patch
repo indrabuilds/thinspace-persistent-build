@@ -1,8 +1,8 @@
 diff --git a/ChatBar/ChatBarPanel.swift b/ChatBar/ChatBarPanel.swift
-index 7c33a8f..ff81e69 100644
+index 8d053f5..b2263c6 100644
 --- a/ChatBar/ChatBarPanel.swift
 +++ b/ChatBar/ChatBarPanel.swift
-@@ -60,6 +60,7 @@ final class ChatBarPanel: NSPanel, NSWindowDelegate {
+@@ -63,6 +63,7 @@ final class ChatBarPanel: NSPanel, NSWindowDelegate {
      private var pendingConversationExpansion = false
      private var positionSaveWork: DispatchWorkItem?
      private var sizeSaveWork: DispatchWorkItem?
@@ -10,7 +10,7 @@ index 7c33a8f..ff81e69 100644
      private var clickOutsideMonitor: Any?
      private weak var webViewModel: WebViewModel?
      private var glassEffectView: ChatBarGlassEffectView?
-@@ -140,6 +141,11 @@ final class ChatBarPanel: NSPanel, NSWindowDelegate {
+@@ -143,6 +144,11 @@ final class ChatBarPanel: NSPanel, NSWindowDelegate {
  
      private func configureWindow() {
          isFloatingPanel = true
@@ -22,7 +22,7 @@ index 7c33a8f..ff81e69 100644
          level = .floating
          isMovable = true
          isMovableByWindowBackground = false
-@@ -163,15 +169,27 @@ final class ChatBarPanel: NSPanel, NSWindowDelegate {
+@@ -166,15 +172,27 @@ final class ChatBarPanel: NSPanel, NSWindowDelegate {
  
      }
  
@@ -52,6 +52,76 @@ index 7c33a8f..ff81e69 100644
              self.onRequestDismiss()
          }
      }
+diff --git a/ChatBar/ChatBarView.swift b/ChatBar/ChatBarView.swift
+index 7284470..89de712 100644
+--- a/ChatBar/ChatBarView.swift
++++ b/ChatBar/ChatBarView.swift
+@@ -59,41 +59,33 @@ struct ChatBarView: View {
+     let onExpandToMain: () -> Void
+ 
+     var body: some View {
+-        ZStack(alignment: .topTrailing) {
+-            BrowserWebView(webViewModel: webViewModel)
+-
+-            // Expand button
+-            Button(action: onExpandToMain) {
+-                Image(systemName: "arrow.up.left.and.arrow.down.right")
+-                    .font(.system(size: 14, weight: .medium))
+-                    .foregroundStyle(.secondary)
+-                    .frame(width: 38, height: 38)
+-                    .background(.ultraThinMaterial, in: Circle())
+-                    .contentShape(Circle())
+-            }
+-            .buttonStyle(.plain)
+-            .padding(16)
+-
+-            // Leave provider-owned controls at either side interactive.
+-            VStack {
+-                HStack {
+-                    Spacer()
+-                        .frame(width: Constants.dragRegionLeading)
+-                    WindowDragView()
+-                        .frame(maxWidth: .infinity, maxHeight: Constants.dragRegionHeight)
+-                    Spacer()
+-                        .frame(width: Constants.dragRegionTrailing)
++        // Native window controls live above the webpage. Overlaying a drag
++        // region on the provider's header intercepts Work/model/menu clicks.
++        VStack(spacing: 0) {
++            HStack(spacing: 0) {
++                WindowDragView()
++                    .overlay {
++                        Text("Drag Chat Bar")
++                            .font(.caption)
++                            .foregroundStyle(.secondary)
++                            .allowsHitTesting(false)
++                    }
++                Button(action: onExpandToMain) {
++                    Image(systemName: "arrow.up.left.and.arrow.down.right")
++                        .font(.system(size: 12, weight: .medium))
++                        .frame(width: 34, height: 34)
++                        .contentShape(Rectangle())
+                 }
+-                .padding(.top, Constants.dragRegionTopPadding)
+-                Spacer()
++                .buttonStyle(.plain)
++                .help("Open full window")
++                .accessibilityLabel("Open full window")
+             }
++            .frame(height: Self.headerHeight)
++            .background(.ultraThinMaterial)
++
++            BrowserWebView(webViewModel: webViewModel)
+         }
+     }
+ 
+-    private enum Constants {
+-        static let dragRegionLeading: CGFloat = 80
+-        static let dragRegionTrailing: CGFloat = 160
+-        static let dragRegionHeight: CGFloat = 38
+-        static let dragRegionTopPadding: CGFloat = 16
+-    }
++    static let headerHeight: CGFloat = 34
+ }
 diff --git a/Coordinators/AppCoordinator.swift b/Coordinators/AppCoordinator.swift
 index 494a13f..19bfc7b 100644
 --- a/Coordinators/AppCoordinator.swift
@@ -68,22 +138,103 @@ index 494a13f..19bfc7b 100644
          chatBar?.positionForPresentation(force: true)
      }
 diff --git a/README.md b/README.md
-index 64dd203..1a8fc0f 100644
+index 64dd203..c84317a 100644
 --- a/README.md
 +++ b/README.md
-@@ -47,6 +47,7 @@ idea: the smallest thing that can sit between you and three very large web apps.
- - Find, back, forward, reload, sidebar, zoom, and always-on-top controls
- - Customizable native toolbar
- - Floating Chat Bar with global shortcuts
-+- Keep Chat Bar Visible (on by default): stays floating while other apps are active, allowing file drag-and-drop; turn it off in Settings → Chat Bar to restore click-away dismissal
- - Light, dark, and system themes
- - Shared text size for the main window and Chat Bar
- - Launch at login, optional hidden Dock icon, and optional hidden launch window
+@@ -1,3 +1,13 @@
++# Thinspace Persistent — custom build 20261019
++
++Based on Thinspace 1.2.2, commit `9a2ab018a8656c5a086b375de07b553484dba954`.
++
++- Settings → Chat Bar → Keep Chat Bar Visible defaults on; turn it off to restore click-away dismissal.
++- Hidden ordinary sessions stay loaded for two hours; detected private/Temporary Chats are exempt from automatic idle unloading.
++- A separate native header keeps dragging and full-window controls away from webpage buttons, including ChatGPT Work.
++- Option+Space, Command+Shift+N, and provider storage retain the upstream implementation.
++- Retention applies while Thinspace is running. Quitting, switching providers, explicit navigation/reload, website timeouts, and WebKit/macOS process termination can still end or reload a page. Thinspace does not send keep-alive messages or save private conversations to disk.
++
+ # Thinspace
+ 
+ **Big AI. Very little app.**
 diff --git a/Tests/ProviderArchitectureTests.swift b/Tests/ProviderArchitectureTests.swift
-index 172ac9f..562106a 100644
+index fbd411b..3545cec 100644
 --- a/Tests/ProviderArchitectureTests.swift
 +++ b/Tests/ProviderArchitectureTests.swift
-@@ -877,3 +877,50 @@ final class SelectionCaptureDeliveryTests: XCTestCase {
+@@ -9,40 +9,61 @@ import JavaScriptCore
+ import KeyboardShortcuts
+ import WebKit
+ import XCTest
++import SwiftUI
+ @testable import Thinspace
+ 
+ final class BackgroundSessionCountdownTests: XCTestCase {
+     func testTimeSpentVisibleDoesNotShortenTheBackgroundGracePeriod() {
+         var countdown = BackgroundSessionCountdown()
+         XCTAssertNil(countdown.remainingTime(isVisible: true, now: 0))
+-        // Read a page for twenty minutes, then switch away for three minutes.
+-        XCTAssertEqual(countdown.remainingTime(isVisible: false, now: 1200), 900)
+-        XCTAssertEqual(countdown.remainingTime(isVisible: false, now: 1380), 720)
++        XCTAssertEqual(countdown.remainingTime(isVisible: false, now: 1200), 7200)
++        XCTAssertEqual(countdown.remainingTime(isVisible: false, now: 1380), 7020)
+     }
+ 
+     func testRepeatedHiddenNotificationsDoNotExtendTheDeadline() {
+         var countdown = BackgroundSessionCountdown()
+-        XCTAssertEqual(countdown.remainingTime(isVisible: false, now: 0), 900)
+-        XCTAssertEqual(countdown.remainingTime(isVisible: false, now: 600), 300)
+-        XCTAssertEqual(countdown.remainingTime(isVisible: false, now: 900), 0)
+-        XCTAssertEqual(countdown.remainingTime(isVisible: false, now: 1000), 0)
++        XCTAssertEqual(countdown.remainingTime(isVisible: false, now: 0), 7200)
++        XCTAssertEqual(countdown.remainingTime(isVisible: false, now: 600), 6600)
++        XCTAssertEqual(countdown.remainingTime(isVisible: false, now: 7200), 0)
++        XCTAssertEqual(countdown.remainingTime(isVisible: false, now: 7300), 0)
+     }
+ 
+     func testReturningToViewStartsAFreshGracePeriodOnTheNextHide() {
+         var countdown = BackgroundSessionCountdown()
+         _ = countdown.remainingTime(isVisible: false, now: 0)
+-        XCTAssertNil(countdown.remainingTime(isVisible: true, now: 899))
+-        XCTAssertEqual(countdown.remainingTime(isVisible: false, now: 1000), 900)
+-        XCTAssertEqual(countdown.remainingTime(isVisible: false, now: 1180), 720)
++        XCTAssertNil(countdown.remainingTime(isVisible: true, now: 7199))
++        XCTAssertEqual(countdown.remainingTime(isVisible: false, now: 8000), 7200)
++        XCTAssertEqual(countdown.remainingTime(isVisible: false, now: 8180), 7020)
+     }
+ 
+     func testExplicitResumeResetsAnExpiredCountdown() {
+         var countdown = BackgroundSessionCountdown()
+         _ = countdown.remainingTime(isVisible: false, now: 0)
+-        XCTAssertEqual(countdown.remainingTime(isVisible: false, now: 900), 0)
++        XCTAssertEqual(countdown.remainingTime(isVisible: false, now: 7200), 0)
+         countdown.reset()
+-        // A summon can resume before its window has been ordered on screen.
+-        XCTAssertEqual(countdown.remainingTime(isVisible: false, now: 950), 900)
++        XCTAssertEqual(countdown.remainingTime(isVisible: false, now: 7250), 7200)
++    }
++
++    func testOrdinarySessionSurvivesMoreThanThirtyMinutesHidden() {
++        var countdown = BackgroundSessionCountdown()
++        _ = countdown.remainingTime(isVisible: false, now: 0)
++        XCTAssertEqual(countdown.remainingTime(isVisible: false, now: 31 * 60), 5340)
++        XCTAssertEqual(countdown.remainingTime(isVisible: false, now: 119 * 60), 60)
++        XCTAssertEqual(countdown.remainingTime(isVisible: false, now: 120 * 60), 0)
++    }
++
++    func testPrivateSessionNeverGetsAnIdleUnloadDeadline() {
++        var countdown = BackgroundSessionCountdown()
++        for time: TimeInterval in [0, 31 * 60, 3 * 60 * 60, 24 * 60 * 60] {
++            XCTAssertNil(countdown.remainingTime(isVisible: false, isPrivateChat: true, now: time))
++        }
++    }
++
++    func testEnteringPrivateModeCancelsOldDeadlineAndLeavingStartsFreshGrace() {
++        var countdown = BackgroundSessionCountdown()
++        _ = countdown.remainingTime(isVisible: false, now: 0)
++        XCTAssertNil(countdown.remainingTime(isVisible: false, isPrivateChat: true, now: 7199))
++        XCTAssertEqual(countdown.remainingTime(isVisible: false, isPrivateChat: false, now: 9000), 7200)
+     }
+ }
+ 
+@@ -912,3 +933,99 @@ final class SelectionCaptureDeliveryTests: XCTestCase {
          wait(for: [delivered], timeout: 0.3)
      }
  }
@@ -134,6 +285,95 @@ index 172ac9f..562106a 100644
 +        legacyPanel.close()
 +    }
 +}
++
++final class ChatBarWebControlHitTests: XCTestCase {
++    @MainActor
++    func testNativeHeaderDoesNotCoverTheWebpagesTopRow() {
++        _ = NSApplication.shared
++        let defaults = UserDefaults.standard
++        let oldProvider = defaults.object(forKey: LLMProvider.defaultsKey)
++        defer {
++            if let oldProvider { defaults.set(oldProvider, forKey: LLMProvider.defaultsKey) }
++            else { defaults.removeObject(forKey: LLMProvider.defaultsKey) }
++        }
++        let model = WebViewModel(provider: .chatgpt)
++        model.wkWebView.stopLoading()
++        model.wkWebView.loadHTMLString("<html><body><button>Work</button></body></html>", baseURL: nil)
++        let host = NSHostingView(rootView: ChatBarView(webViewModel: model, onExpandToMain: {}))
++        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 500, height: 300),
++                              styleMask: [.titled], backing: .buffered, defer: false)
++        window.isReleasedWhenClosed = false
++        window.contentView = host
++        window.makeKeyAndOrderFront(nil)
++        let laidOut = expectation(description: "SwiftUI and WebKit layout")
++        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { laidOut.fulfill() }
++        wait(for: [laidOut], timeout: 3)
++        host.layoutSubtreeIfNeeded()
++        defer { window.close(); model.wkWebView.stopLoading() }
++
++        func descendants(_ view: NSView) -> [NSView] {
++            [view] + view.subviews.flatMap { descendants($0) }
++        }
++        let dragViews = descendants(host).compactMap { $0 as? WindowDragNSView }
++        XCTAssertEqual(dragViews.count, 1)
++        let web = model.wkWebView
++        let webRect = host.convert(web.bounds, from: web)
++        XCTAssertGreaterThan(webRect.height, 200)
++        for drag in dragViews {
++            let dragRect = host.convert(drag.bounds, from: drag)
++            XCTAssertGreaterThan(dragRect.width, 100)
++            XCTAssertFalse(dragRect.intersects(webRect), "Drag region must not overlap the provider page")
++        }
++        // Probe both the former central drag overlay and trailing expand area.
++        for x in [web.bounds.width * 0.5, web.bounds.width - 25] {
++            let topRow = NSPoint(x: x, y: web.isFlipped ? 20 : web.bounds.height - 20)
++            let point = host.convert(topRow, from: web)
++            let target = host.hitTest(point)
++            XCTAssertTrue(target === web || target?.isDescendant(of: web) == true,
++                          "Provider top-row clicks must reach WebKit")
++        }
++    }
++}
+diff --git a/Thinspace.xcodeproj/project.pbxproj b/Thinspace.xcodeproj/project.pbxproj
+index 6c19bb2..9ea35b5 100644
+--- a/Thinspace.xcodeproj/project.pbxproj
++++ b/Thinspace.xcodeproj/project.pbxproj
+@@ -313,7 +313,7 @@
+ 				ARCHS = arm64;
+ 				BUNDLE_LOADER = "$(TEST_HOST)";
+ 				CODE_SIGN_STYLE = Automatic;
+-				CURRENT_PROJECT_VERSION = 1;
++				CURRENT_PROJECT_VERSION = 20261019;
+ 				GENERATE_INFOPLIST_FILE = YES;
+ 				MACOSX_DEPLOYMENT_TARGET = 27.0;
+ 				MARKETING_VERSION = 1.2.2;
+@@ -332,7 +332,7 @@
+ 				ARCHS = arm64;
+ 				BUNDLE_LOADER = "$(TEST_HOST)";
+ 				CODE_SIGN_STYLE = Automatic;
+-				CURRENT_PROJECT_VERSION = 1;
++				CURRENT_PROJECT_VERSION = 20261019;
+ 				GENERATE_INFOPLIST_FILE = YES;
+ 				MACOSX_DEPLOYMENT_TARGET = 27.0;
+ 				MARKETING_VERSION = 1.2.2;
+@@ -481,7 +481,7 @@
+ 				CODE_SIGN_ENTITLEMENTS = Resources/Thinspace.entitlements;
+ 				CODE_SIGN_STYLE = Automatic;
+ 				COMBINE_HIDPI_IMAGES = YES;
+-				CURRENT_PROJECT_VERSION = 1;
++				CURRENT_PROJECT_VERSION = 20261019;
+ 				DEAD_CODE_STRIPPING = YES;
+ 				ENABLE_APP_SANDBOX = NO;
+ 				ENABLE_FILE_ACCESS_DOWNLOADS_FOLDER = readwrite;
+@@ -530,7 +530,7 @@
+ 				CODE_SIGN_ENTITLEMENTS = Resources/Thinspace.entitlements;
+ 				CODE_SIGN_STYLE = Automatic;
+ 				COMBINE_HIDPI_IMAGES = YES;
+-				CURRENT_PROJECT_VERSION = 1;
++				CURRENT_PROJECT_VERSION = 20261019;
+ 				DEAD_CODE_STRIPPING = YES;
+ 				ENABLE_APP_SANDBOX = NO;
+ 				ENABLE_FILE_ACCESS_DOWNLOADS_FOLDER = readwrite;
 diff --git a/Utils/UserDefaultsKeys.swift b/Utils/UserDefaultsKeys.swift
 index c7b6e5a..8215e89 100644
 --- a/Utils/UserDefaultsKeys.swift
@@ -148,7 +388,7 @@ index c7b6e5a..8215e89 100644
      case panelX
      case panelY
 diff --git a/Views/Settings/ChatBarSettingsSections.swift b/Views/Settings/ChatBarSettingsSections.swift
-index 1681248..bc9b5ac 100644
+index 1681248..97c4bd6 100644
 --- a/Views/Settings/ChatBarSettingsSections.swift
 +++ b/Views/Settings/ChatBarSettingsSections.swift
 @@ -15,6 +15,9 @@ struct ChatBarSettingsSections: View {
@@ -161,7 +401,7 @@ index 1681248..bc9b5ac 100644
      @State private var isAccessibilityTrusted = false
  
      var body: some View {
-@@ -34,6 +37,12 @@ struct ChatBarSettingsSections: View {
+@@ -34,6 +37,16 @@ struct ChatBarSettingsSections: View {
                  coordinator.resetChatBarPosition()
              }
  
@@ -171,6 +411,55 @@ index 1681248..bc9b5ac 100644
 +                    coordinator.setKeepChatBarVisible(newValue)
 +                }
 +
++            Text("Hidden sessions stay loaded for 2 hours. Temporary Chats are kept loaded until you leave them or quit Thinspace.")
++                .font(.caption)
++                .foregroundStyle(.secondary)
++
              KeyboardShortcuts.Recorder("Keyboard Shortcut", name: .bringToFront)
          }
  
+diff --git a/WebKit/WebViewModel.swift b/WebKit/WebViewModel.swift
+index a670e7d..9a58973 100644
+--- a/WebKit/WebViewModel.swift
++++ b/WebKit/WebViewModel.swift
+@@ -11,15 +11,21 @@ import WebKit
+ /// Measures continuous time out of view, using a monotonic clock. Time spent
+ /// reading or typing in a visible page must never count toward suspension.
+ struct BackgroundSessionCountdown {
+-    static let timeout: TimeInterval = 15 * 60
++    static let timeout: TimeInterval = 2 * 60 * 60
+     private var hiddenSince: TimeInterval?
+ 
+     mutating func reset() {
+         hiddenSince = nil
+     }
+ 
+-    mutating func remainingTime(isVisible: Bool, now: TimeInterval) -> TimeInterval? {
+-        if isVisible {
++    mutating func remainingTime(
++        isVisible: Bool,
++        isPrivateChat: Bool = false,
++        now: TimeInterval
++    ) -> TimeInterval? {
++        // A private conversation cannot be restored by reloading its URL.
++        // Retain its live page until the user explicitly leaves it or quits.
++        if isVisible || isPrivateChat {
+             hiddenSince = nil
+             return nil
+         }
+@@ -447,6 +453,7 @@ final class WebViewModel {
+         guard isInPrivateChat != inPrivateChat else { return }
+         isInPrivateChat = inPrivateChat
+         onPrivateChatStateChanged?(inPrivateChat)
++        resetInactivityTimer()
+     }
+ 
+     // MARK: - Inactivity suspension
+@@ -464,6 +471,7 @@ final class WebViewModel {
+         guard !isSuspended else { return }
+         guard let remaining = backgroundCountdown.remainingTime(
+             isVisible: hasObservableWindow,
++            isPrivateChat: isInPrivateChat,
+             now: ProcessInfo.processInfo.systemUptime
+         ) else { return }
+         guard remaining > 0 else {
