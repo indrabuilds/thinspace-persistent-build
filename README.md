@@ -14,3 +14,10 @@ Run the manually triggered Build Thinspace Persistent workflow. It applies the p
 
 Original Thinspace: https://github.com/0ssamaak0/Thinspace
 Original attribution and LICENSE are preserved in the build package. Noncommercial adaptation.
+
+## Verified build
+
+Build 20261019 succeeded: 54 tests passed, 0 failed. Download the app from this run’s Artifacts section:
+https://github.com/indrabuilds/thinspace-persistent-build/actions/runs/39183755827
+
+Replacing this custom build with a stock upstream update removes the custom features.
