@@ -1,23 +1,15 @@
-# Thinspace Persistent — 1.2.2 custom build 20261019
+# Thinspace Persistent — seamless build 2026101902
 
-Updated from upstream 0ssamaak0/Thinspace at `9a2ab018a8656c5a086b375de07b553484dba954`.
+Thinspace 1.2.2 with the previously verified persistence and longer-session fixes,
+refined to remove the extra header entirely.
 
-- Keep Chat Bar Visible restored, enabled by default. Option+Space still explicitly hides/shows.
-- Ordinary hidden sessions remain loaded for two hours instead of fifteen minutes.
-- Detected Temporary/private Chats are exempt from automatic idle unloading while the app runs.
-- Native drag/expand controls sit in their own header above the webpage, leaving Work and other webpage buttons clickable.
-- Command+Shift+N retains the existing Temporary Chat handler.
+- The webpage fills the content area, with no drag bar, caption, or controls over it.
+- Drag the existing glass rim to move the panel; its top/bottom edge uses a grab cursor.
+- Double-click the rim, right-click it → Open Full Window, or press Command+Shift+Return to open the full window. This action is also in the menu bar.
+- Option+Space show/hide and Command+Shift+N Temporary Chat are preserved.
+- Persistent mode, two-hour ordinary hidden sessions, and private-chat idle-unload exemption are retained.
 
-This does not preserve a session across quitting, provider switches, manual reload/navigation, website session expiry, or macOS/WebKit process termination. No private conversations are saved to disk and no artificial keep-alive requests are sent.
-
-Run the manually triggered Build Thinspace Persistent workflow. It applies the patch to pinned upstream, builds, tests, ad-hoc signs, and uploads Thinspace-Persistent-1.2.2.zip. Build artifacts are retained for thirty days. The repository contains only the open-source patch, workflow, and instructions; no accounts or sessions.
-
-Original Thinspace: https://github.com/0ssamaak0/Thinspace
-Original attribution and LICENSE are preserved in the build package. Noncommercial adaptation.
-
-## Verified build
-
-Build 20261019 succeeded: 54 tests passed, 0 failed. Download the app from this run’s Artifacts section:
-https://github.com/indrabuilds/thinspace-persistent-build/actions/runs/39183755827
-
-Replacing this custom build with a stock upstream update removes the custom features.
+Pinned upstream base: `9a2ab018a8656c5a086b375de07b553484dba954`.
+Original project: https://github.com/0ssamaak0/Thinspace
+Original attribution and LICENSE are preserved. Noncommercial adaptation.
+No account data or conversations are included in this repository.

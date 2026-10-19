@@ -64,9 +64,9 @@ jobs:
             --entitlements Resources/Thinspace.entitlements "$app_path"
           codesign --verify --strict "$app_path"
           mkdir -p "$GITHUB_WORKSPACE/dist"
-          ditto -c -k --keepParent "$app_path" "$GITHUB_WORKSPACE/dist/Thinspace-Persistent-1.2.2.zip"
+          ditto -c -k --keepParent "$app_path" "$GITHUB_WORKSPACE/dist/Thinspace-Persistent-Seamless.zip"
           cp LICENSE "$GITHUB_WORKSPACE/dist/LICENSE"
-          shasum -a 256 "$GITHUB_WORKSPACE/dist/Thinspace-Persistent-1.2.2.zip" > "$GITHUB_WORKSPACE/dist/SHA256.txt"
+          shasum -a 256 "$GITHUB_WORKSPACE/dist/Thinspace-Persistent-Seamless.zip" > "$GITHUB_WORKSPACE/dist/SHA256.txt"
       - name: Upload installable app
         uses: actions/upload-artifact@v4
         with:
@@ -83,6 +83,5 @@ jobs:
             build.log
             tests.log
             test-summary.json
-            source/build/Tests.xcresult
           if-no-files-found: ignore
           retention-days: 30
