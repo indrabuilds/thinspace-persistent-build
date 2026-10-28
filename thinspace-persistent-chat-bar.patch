@@ -522,7 +522,7 @@ index 64dd203..67e050b 100644
  
  **Big AI. Very little app.**
 diff --git a/Tests/ProviderArchitectureTests.swift b/Tests/ProviderArchitectureTests.swift
-index fbd411b..858fdd0 100644
+index fbd411b..84b5a91 100644
 --- a/Tests/ProviderArchitectureTests.swift
 +++ b/Tests/ProviderArchitectureTests.swift
 @@ -9,40 +9,61 @@ import JavaScriptCore
@@ -845,7 +845,7 @@ index fbd411b..858fdd0 100644
 +                return errorShown ? [errorNode] : [];
 +            }
 +        };
-+        var window = { location: { href: 'https://chatgpt.com/' }, __thinspaceDetectedPrivateChatState: false };
++        var window = { location: { href: 'https://chatgpt.com/' }, __thinspaceDetectedPrivateChatState: false, __thinspaceReadPrivateChatState: function () { return window.__thinspaceDetectedPrivateChatState; } };
 +        function activity(type) { (listeners[type] || []).forEach(function (f) { f({ preventDefault: function () {} }); }); }
 +        function eligible() { return window.__thinspaceIdleRecovery.snapshot().shouldRecover; }
 +        function expired() { clock += 3601000; errorShown = true; eligible(); clock += 4000; }
@@ -940,7 +940,7 @@ index fbd411b..858fdd0 100644
 +            if let failure { throw failure }
 +            return output
 +        }
-+        _ = try evaluate("window.clock=10000000; Date.now=function(){return window.clock;}; window.__thinspaceDetectedPrivateChatState=false;" + UserScripts.idleRecoverySource)
++        _ = try evaluate("window.clock=10000000; Date.now=function(){return window.clock;}; window.__thinspaceDetectedPrivateChatState=false; window.__thinspaceReadPrivateChatState=function(){return window.__thinspaceDetectedPrivateChatState;};" + UserScripts.idleRecoverySource)
 +        _ = try evaluate("window.clock+=3601000; window.__thinspaceIdleRecovery.snapshot(); window.clock+=4000;")
 +        let snapshot = try XCTUnwrap(try evaluate("window.__thinspaceIdleRecovery.snapshot()") as? [String: Any])
 +        XCTAssertEqual(snapshot["shouldRecover"] as? Bool, true)
@@ -1078,7 +1078,7 @@ index 1681248..2010bd7 100644
          }
  
 diff --git a/WebKit/UserScripts.swift b/WebKit/UserScripts.swift
-index bf534ca..f484df1 100644
+index bf534ca..f8e30b9 100644
 --- a/WebKit/UserScripts.swift
 +++ b/WebKit/UserScripts.swift
 @@ -40,6 +40,11 @@ enum UserScripts {
@@ -1158,8 +1158,8 @@ index bf534ca..f484df1 100644
 +            else if (errorSince === null) errorSince = now;
 +            const safe = !!e && visible(e) && !busy() && !composing &&
 +                now - lastEdit >= 8000 && now - lastInteraction >= 3000 && !attachments(e);
-+            const privateMode = typeof window.__thinspaceDetectedPrivateChatState === 'boolean'
-+                ? window.__thinspaceDetectedPrivateChatState : null;
++            const privateMode = typeof window.__thinspaceReadPrivateChatState === 'function'
++                ? window.__thinspaceReadPrivateChatState() : null;
 +            return { ready: !!e && visible(e), safe: safe, hasError: error, privateMode: privateMode,
 +                shouldRecover: armed && error && now - errorSince >= 3000 && safe && privateMode !== null,
 +                draft: text(e), href: window.location.href };
@@ -1219,22 +1219,21 @@ index bf534ca..f484df1 100644
      private static let consoleLogBridgeSource = """
      (function() {
          if (window.__thinspaceConsoleBridgeInstalled) return;
-@@ -527,6 +651,7 @@ enum UserScripts {
+@@ -527,6 +651,14 @@ enum UserScripts {
  
              let lastState = null;
              let scheduled = false;
-+            window.__thinspaceDetectedPrivateChatState = null;
++            // Recovery reads the provider's actual DOM/URL state, not the
++            // optimistic state briefly forced after a private-toggle click.
++            window.__thinspaceReadPrivateChatState = function() {
++                try {
++                    const state = detectProviderPrivateChatState();
++                    return typeof state === 'boolean' ? state : null;
++                } catch (_) { return null; }
++            };
              let forcedState = null;
              let forcedStateUntil = 0;
              let toggleGeneration = 0;
-@@ -535,6 +660,7 @@ enum UserScripts {
-                 state = !!state;
-                 if (!force && state === lastState) return;
-                 lastState = state;
-+                window.__thinspaceDetectedPrivateChatState = state;
-                 try {
-                     window.webkit.messageHandlers.\(privateChatStateHandler).postMessage({
-                         inPrivateChat: state
 diff --git a/WebKit/WebViewModel.swift b/WebKit/WebViewModel.swift
 index a670e7d..7aab484 100644
 --- a/WebKit/WebViewModel.swift
