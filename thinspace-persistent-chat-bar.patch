@@ -522,7 +522,7 @@ index 64dd203..67e050b 100644
  
  **Big AI. Very little app.**
 diff --git a/Tests/ProviderArchitectureTests.swift b/Tests/ProviderArchitectureTests.swift
-index fbd411b..84b5a91 100644
+index fbd411b..ae02d78 100644
 --- a/Tests/ProviderArchitectureTests.swift
 +++ b/Tests/ProviderArchitectureTests.swift
 @@ -9,40 +9,61 @@ import JavaScriptCore
@@ -655,7 +655,7 @@ index fbd411b..84b5a91 100644
          XCTAssertEqual(
              ChatBarPanel.contentOrigin(forPanelOrigin: panelOrigin),
              contentOrigin
-@@ -912,3 +915,300 @@ final class SelectionCaptureDeliveryTests: XCTestCase {
+@@ -912,3 +915,307 @@ final class SelectionCaptureDeliveryTests: XCTestCase {
          wait(for: [delivered], timeout: 0.3)
      }
  }
@@ -890,6 +890,13 @@ index fbd411b..84b5a91 100644
 +        XCTAssertFalse(c.evaluateScript("eligible()")!.toBool(), "Unknown private mode must block automatic recovery")
 +    }
 +
++    func testNewPageInteractionCanCancelRestoration() throws {
++        let c = try page()
++        XCTAssertFalse(c.evaluateScript("window.__thinspaceIdleRecovery.snapshot().userInteracted")!.toBool())
++        c.evaluateScript("listeners.pointerdown[0]({isTrusted:true, type:'pointerdown'});")
++        XCTAssertTrue(c.evaluateScript("window.__thinspaceIdleRecovery.snapshot().userInteracted")!.toBool())
++    }
++
 +    func testSuccessfulResponseAndNavigationEndTheIdleEpisode() throws {
 +        let c = try page()
 +        c.evaluateScript("expired(); errorShown=false; assistantCount=1; eligible(); errorShown=true; eligible(); clock+=4000;")
@@ -1078,7 +1085,7 @@ index 1681248..2010bd7 100644
          }
  
 diff --git a/WebKit/UserScripts.swift b/WebKit/UserScripts.swift
-index bf534ca..f8e30b9 100644
+index bf534ca..30951a1 100644
 --- a/WebKit/UserScripts.swift
 +++ b/WebKit/UserScripts.swift
 @@ -40,6 +40,11 @@ enum UserScripts {
@@ -1093,7 +1100,7 @@ index bf534ca..f8e30b9 100644
          #if DEBUG
          scripts.insert(
              WKUserScript(
-@@ -54,6 +59,125 @@ enum UserScripts {
+@@ -54,6 +59,126 @@ enum UserScripts {
          return scripts
      }
  
@@ -1105,20 +1112,21 @@ index bf534ca..f8e30b9 100644
 +        const ERROR = 'WritingBlockInvalidConversationError';
 +        let lastActivity = Date.now(), lastEdit = 0, lastInteraction = 0;
 +        let armed = false, composing = false, errorSince = null, frozen = false;
-+        let restoring = null, armedResponses = 0, pageURL = window.location.href;
++        let restoring = null, armedResponses = 0, pageURL = window.location.href, userInteracted = false;
 +        function responseCount() { return document.querySelectorAll('[data-message-author-role="assistant"]').length; }
 +        function arm() { if (!armed) { armed = true; armedResponses = responseCount(); } }
-+        function activity(edit) {
++        function activity(edit, event) {
++            if (event && event.isTrusted && event.type !== 'input') userInteracted = true;
 +            const now = Date.now();
 +            if (now - lastActivity >= HOUR) arm();
 +            lastActivity = now;
 +            lastInteraction = now;
 +            if (edit) lastEdit = now;
 +        }
-+        document.addEventListener('input', function () { activity(true); }, true);
-+        document.addEventListener('keydown', function () { activity(true); }, true);
-+        document.addEventListener('pointerdown', function () { activity(false); }, true);
-+        document.addEventListener('compositionstart', function () { composing = true; activity(true); }, true);
++        document.addEventListener('input', function (e) { activity(true, e); }, true);
++        document.addEventListener('keydown', function (e) { activity(true, e); }, true);
++        document.addEventListener('pointerdown', function (e) { activity(false, e); }, true);
++        document.addEventListener('compositionstart', function (e) { composing = true; activity(true, e); }, true);
 +        document.addEventListener('compositionend', function () { composing = false; activity(true); }, true);
 +        document.addEventListener('beforeinput', function (e) { if (frozen) e.preventDefault(); }, true);
 +        document.addEventListener('submit', function (e) { if (frozen) e.preventDefault(); }, true);
@@ -1160,7 +1168,7 @@ index bf534ca..f8e30b9 100644
 +                now - lastEdit >= 8000 && now - lastInteraction >= 3000 && !attachments(e);
 +            const privateMode = typeof window.__thinspaceReadPrivateChatState === 'function'
 +                ? window.__thinspaceReadPrivateChatState() : null;
-+            return { ready: !!e && visible(e), safe: safe, hasError: error, privateMode: privateMode,
++            return { ready: !!e && visible(e), safe: safe, hasError: error, privateMode: privateMode, userInteracted: userInteracted,
 +                shouldRecover: armed && error && now - errorSince >= 3000 && safe && privateMode !== null,
 +                draft: text(e), href: window.location.href };
 +        }
@@ -1219,7 +1227,7 @@ index bf534ca..f8e30b9 100644
      private static let consoleLogBridgeSource = """
      (function() {
          if (window.__thinspaceConsoleBridgeInstalled) return;
-@@ -527,6 +651,14 @@ enum UserScripts {
+@@ -527,6 +652,14 @@ enum UserScripts {
  
              let lastState = null;
              let scheduled = false;
@@ -1235,7 +1243,7 @@ index bf534ca..f8e30b9 100644
              let forcedStateUntil = 0;
              let toggleGeneration = 0;
 diff --git a/WebKit/WebViewModel.swift b/WebKit/WebViewModel.swift
-index a670e7d..7aab484 100644
+index a670e7d..fad0e75 100644
 --- a/WebKit/WebViewModel.swift
 +++ b/WebKit/WebViewModel.swift
 @@ -11,15 +11,21 @@ import WebKit
@@ -1379,7 +1387,7 @@ index a670e7d..7aab484 100644
          resumeIfSuspended()
          guard capabilities.contains(.privateChat) else { return }
          guard !isInPrivateChat else { return }
-@@ -447,6 +486,140 @@ final class WebViewModel {
+@@ -447,6 +486,151 @@ final class WebViewModel {
          guard isInPrivateChat != inPrivateChat else { return }
          isInPrivateChat = inPrivateChat
          onPrivateChatStateChanged?(inPrivateChat)
@@ -1430,6 +1438,10 @@ index a670e7d..7aab484 100644
 +                  !page.isLoading, page.url == url, self.hasVisibleRecoveryHost,
 +                  let snapshot = result as? [String: Any] else { return }
 +            if let pending = self.pendingIdleRecovery {
++                if snapshot["userInteracted"] as? Bool == true {
++                    self.pendingIdleRecovery = nil
++                    return
++                }
 +                if Date.timeIntervalSinceReferenceDate - pending.startedAt > 60 {
 +                    if snapshot["safe"] as? Bool == true {
 +                        self.pendingIdleRecovery = nil
@@ -1464,7 +1476,14 @@ index a670e7d..7aab484 100644
 +    }
 +
 +    private func finishIdleRecovery(snapshot: [String: Any]) {
-+        guard var attempt = pendingIdleRecovery, snapshot["ready"] as? Bool == true else { return }
++        guard var attempt = pendingIdleRecovery, snapshot["ready"] as? Bool == true,
++              snapshot["safe"] as? Bool == true else { return }
++        // A real interaction on the new page gives control back to the user.
++        // Keep the backup in the menu rather than navigating or overwriting.
++        if snapshot["userInteracted"] as? Bool == true {
++            pendingIdleRecovery = nil
++            return
++        }
 +        // Never insert a private draft into a regular conversation. If the
 +        // old temporary page cannot resume, explicitly create a fresh private one.
 +        if attempt.wasPrivate && snapshot["privateMode"] as? Bool == nil { return }
@@ -1520,7 +1539,7 @@ index a670e7d..7aab484 100644
      }
  
      // MARK: - Inactivity suspension
-@@ -464,6 +637,7 @@ final class WebViewModel {
+@@ -464,6 +648,7 @@ final class WebViewModel {
          guard !isSuspended else { return }
          guard let remaining = backgroundCountdown.remainingTime(
              isVisible: hasObservableWindow,
