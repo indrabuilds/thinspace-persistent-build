@@ -21,3 +21,9 @@ The rimless layout, persistent bar, Option+Space, Command+Shift+N, Command+Optio
 Command+Shift+Return, ordinary two-hour hidden retention, and Temporary Chat idle-unload
 exemption are retained. Original project: https://github.com/0ssamaak0/Thinspace
 Original attribution and LICENSE are preserved. Noncommercial adaptation.
+
+## Verified recovery build
+
+Build 2026102801: Release succeeded; 64 tests passed, zero failed.
+https://github.com/indrabuilds/thinspace-persistent-build/actions/runs/40642432783
+Download Thinspace-EdgeToEdge-Recovery.zip from the run’s Artifacts section.
