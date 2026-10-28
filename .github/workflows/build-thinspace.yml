@@ -64,9 +64,9 @@ jobs:
             --entitlements Resources/Thinspace.entitlements "$app_path"
           codesign --verify --strict "$app_path"
           mkdir -p "$GITHUB_WORKSPACE/dist"
-          ditto -c -k --keepParent "$app_path" "$GITHUB_WORKSPACE/dist/Thinspace-Persistent-EdgeToEdge.zip"
+          ditto -c -k --keepParent "$app_path" "$GITHUB_WORKSPACE/dist/Thinspace-EdgeToEdge-Recovery.zip"
           cp LICENSE "$GITHUB_WORKSPACE/dist/LICENSE"
-          shasum -a 256 "$GITHUB_WORKSPACE/dist/Thinspace-Persistent-EdgeToEdge.zip" > "$GITHUB_WORKSPACE/dist/SHA256.txt"
+          shasum -a 256 "$GITHUB_WORKSPACE/dist/Thinspace-EdgeToEdge-Recovery.zip" > "$GITHUB_WORKSPACE/dist/SHA256.txt"
       - name: Upload installable app
         uses: actions/upload-artifact@v4
         with:

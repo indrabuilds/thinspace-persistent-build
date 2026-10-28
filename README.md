@@ -1,22 +1,23 @@
-# Thinspace Persistent — edge-to-edge build 2026101903
+# Thinspace — edge-to-edge with idle-error recovery
 
-Thinspace 1.2.2 with the working persistence and longer-session fixes, refined
-to remove the extra header, the original glass rim, and all content insets.
+Custom build 2026102801, based on Thinspace 1.2.2 at 9a2ab018a8656c5a086b375de07b553484dba954.
 
-- The webpage is the entire floating window surface, with no native controls over it.
-- Hold Command+Option and drag anywhere in the floating bar to move it.
-- Command+Shift+Return or menu bar → Open Full Window expands it.
-- Option+Space show/hide and Command+Shift+N Temporary Chat remain unchanged.
-- Persistent mode, two-hour ordinary hidden sessions, and private-chat idle-unload exemption are retained.
-- Rounded corners and the normal window shadow remain; neither consumes page space.
+After at least one hour without activity, a visible ChatGPT page is eligible for
+one controlled recovery only when WritingBlockInvalidConversationError persists.
+Healthy pages remain untouched. Replies, recent edits, composition, unknown private
+mode, and detected attachments block recovery. Draft text is protected in memory,
+never automatically submitted, and restored only after confirming private mode for
+private drafts. If the temporary page cannot resume, a fresh Temporary Chat may
+open and a brief notice explains that the session changed. A retry budget prevents
+loops. Copy Recovered Draft appears in the menu only if automatic restoration fails.
 
-Pinned upstream: `9a2ab018a8656c5a086b375de07b553484dba954`.
-Original project: https://github.com/0ssamaak0/Thinspace
-Original LICENSE and attribution are preserved. Noncommercial adaptation.
-No account data or conversations are included in this repository.
+No private draft is saved to disk, sent as a keep-alive, or placed on the clipboard
+without the user's Copy action. The one-hour checkpoint is an engineering choice,
+not a claim about OpenAI's session expiry. Recovery depends on the live website DOM;
+unknown or unsupported states are left alone. Website or account sign-in expiry may
+still require user action. Quitting loses memory-only backup text.
 
-## Verified edge-to-edge build
-
-Build 2026101903 passed all 55 tests (zero failures):
-https://github.com/indrabuilds/thinspace-persistent-build/actions/runs/39185084068
-Download Thinspace-Persistent-EdgeToEdge.zip from the run’s Artifacts.
+The rimless layout, persistent bar, Option+Space, Command+Shift+N, Command+Option-drag,
+Command+Shift+Return, ordinary two-hour hidden retention, and Temporary Chat idle-unload
+exemption are retained. Original project: https://github.com/0ssamaak0/Thinspace
+Original attribution and LICENSE are preserved. Noncommercial adaptation.

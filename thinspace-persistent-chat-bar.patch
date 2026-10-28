@@ -504,11 +504,11 @@ index 494a13f..ed065b5 100644
          chatBar?.positionForPresentation(force: true)
      }
 diff --git a/README.md b/README.md
-index 64dd203..4f8b6eb 100644
+index 64dd203..67e050b 100644
 --- a/README.md
 +++ b/README.md
 @@ -1,3 +1,13 @@
-+# Thinspace Persistent — custom build 2026101903
++# Thinspace Persistent — custom build 2026102801
 +
 +Based on Thinspace 1.2.2, commit `9a2ab018a8656c5a086b375de07b553484dba954`.
 +
@@ -522,7 +522,7 @@ index 64dd203..4f8b6eb 100644
  
  **Big AI. Very little app.**
 diff --git a/Tests/ProviderArchitectureTests.swift b/Tests/ProviderArchitectureTests.swift
-index fbd411b..08313d8 100644
+index fbd411b..858fdd0 100644
 --- a/Tests/ProviderArchitectureTests.swift
 +++ b/Tests/ProviderArchitectureTests.swift
 @@ -9,40 +9,61 @@ import JavaScriptCore
@@ -655,7 +655,7 @@ index fbd411b..08313d8 100644
          XCTAssertEqual(
              ChatBarPanel.contentOrigin(forPanelOrigin: panelOrigin),
              contentOrigin
-@@ -912,3 +915,146 @@ final class SelectionCaptureDeliveryTests: XCTestCase {
+@@ -912,3 +915,300 @@ final class SelectionCaptureDeliveryTests: XCTestCase {
          wait(for: [delivered], timeout: 0.3)
      }
  }
@@ -802,8 +802,162 @@ index fbd411b..08313d8 100644
 +                       "Hidden panels must not intercept mouse input")
 +    }
 +}
++
++final class IdleRecoveryPolicyTests: XCTestCase {
++    func testRecoveryBudgetAllowsOneAttemptPerHour() {
++        var gate = IdleRecoveryGate()
++        XCTAssertTrue(gate.canAttempt(now: 10))
++        gate.recordAttempt(now: 10)
++        XCTAssertFalse(gate.canAttempt(now: 10))
++        XCTAssertFalse(gate.canAttempt(now: 3609))
++        XCTAssertTrue(gate.canAttempt(now: 3610))
++        XCTAssertFalse(gate.canAttempt(now: 0), "A backwards clock change must not enable a retry loop")
++    }
++
++    @MainActor
++    func testRecoveryScriptIsOnlyInstalledForChatGPT() {
++        for provider in LLMProvider.allCases {
++            let scripts = UserScripts.createAllScripts(for: ProviderAdapters.adapter(for: provider))
++            XCTAssertEqual(scripts.filter { $0.source == UserScripts.idleRecoverySource }.count,
++                           provider == .chatgpt ? 1 : 0)
++        }
++    }
++}
++
++final class IdleRecoveryScriptTests: XCTestCase {
++    private func page() throws -> JSContext {
++        let c = try XCTUnwrap(JSContext())
++        c.evaluateScript("""
++        var clock = 10000000, errorShown = false, generating = false, files = false, quoted = false, assistantCount = 0;
++        Date.now = function () { return clock; };
++        var listeners = {};
++        var field = { value: 'unsent draft', tagName: 'TEXTAREA', querySelector: function () { return null; }, getClientRects: function () { return [1]; } };
++        var errorNode = { innerText: 'WritingBlockInvalidConversationError', getClientRects: function () { return [1]; }, closest: function () { return quoted ? {} : null; } };
++        function getComputedStyle() { return { visibility: 'visible' }; }
++        var document = {
++            addEventListener: function (type, callback) { (listeners[type] || (listeners[type] = [])).push(callback); },
++            querySelector: function () { return field; },
++            querySelectorAll: function (selector) {
++                if (selector.indexOf('data-message-author-role') >= 0) return Array(assistantCount).fill(errorNode);
++                if (selector.indexOf('stop-button') >= 0) return generating ? [errorNode] : [];
++                if (selector.indexOf('type="file"') >= 0) return files ? [{ files: [1] }] : [];
++                if (selector.indexOf('attachment') >= 0) return [];
++                return errorShown ? [errorNode] : [];
++            }
++        };
++        var window = { location: { href: 'https://chatgpt.com/' }, __thinspaceDetectedPrivateChatState: false };
++        function activity(type) { (listeners[type] || []).forEach(function (f) { f({ preventDefault: function () {} }); }); }
++        function eligible() { return window.__thinspaceIdleRecovery.snapshot().shouldRecover; }
++        function expired() { clock += 3601000; errorShown = true; eligible(); clock += 4000; }
++        """)
++        c.evaluateScript(UserScripts.idleRecoverySource)
++        XCTAssertNil(c.exception)
++        return c
++    }
++
++    func testHealthyPageNeverRefreshesAndFreshErrorDoesNotQualify() throws {
++        let c = try page()
++        c.evaluateScript("clock += 24 * 3600000;")
++        XCTAssertFalse(c.evaluateScript("eligible()")!.toBool())
++        let fresh = try page()
++        fresh.evaluateScript("errorShown = true; eligible(); clock += 10000;")
++        XCTAssertFalse(fresh.evaluateScript("eligible()")!.toBool())
++    }
++
++    func testOnlyPersistentErrorAfterLongIdleQualifies() throws {
++        let c = try page()
++        c.evaluateScript("clock += 3601000; errorShown = true;")
++        XCTAssertFalse(c.evaluateScript("eligible()")!.toBool())
++        c.evaluateScript("clock += 4000;")
++        XCTAssertTrue(c.evaluateScript("eligible()")!.toBool())
++        c.evaluateScript("errorShown = false;")
++        XCTAssertFalse(c.evaluateScript("eligible()")!.toBool())
++    }
++
++    func testTypingCompositionRepliesAndAttachmentsBlockRecovery() throws {
++        let c = try page()
++        c.evaluateScript("expired(); activity('input');")
++        XCTAssertFalse(c.evaluateScript("eligible()")!.toBool())
++        c.evaluateScript("clock += 9000; activity('compositionstart'); clock += 9000;")
++        XCTAssertFalse(c.evaluateScript("eligible()")!.toBool())
++        c.evaluateScript("activity('compositionend'); clock += 9000; generating = true;")
++        XCTAssertFalse(c.evaluateScript("eligible()")!.toBool())
++        c.evaluateScript("generating = false; files = true;")
++        XCTAssertFalse(c.evaluateScript("eligible()")!.toBool())
++        c.evaluateScript("files = false;")
++        XCTAssertTrue(c.evaluateScript("eligible()")!.toBool())
++        c.evaluateScript("window.__thinspaceDetectedPrivateChatState=null;")
++        XCTAssertFalse(c.evaluateScript("eligible()")!.toBool(), "Unknown private mode must block automatic recovery")
++    }
++
++    func testSuccessfulResponseAndNavigationEndTheIdleEpisode() throws {
++        let c = try page()
++        c.evaluateScript("expired(); errorShown=false; assistantCount=1; eligible(); errorShown=true; eligible(); clock+=4000;")
++        XCTAssertFalse(c.evaluateScript("eligible()")!.toBool())
++        let moved = try page()
++        moved.evaluateScript("expired(); window.location.href='https://chatgpt.com/c/new'; eligible(); clock+=4000;")
++        XCTAssertFalse(moved.evaluateScript("eligible()")!.toBool())
++    }
++
++    func testQuotedErrorAndInterveningEditsDoNotTriggerReload() throws {
++        let c = try page()
++        c.evaluateScript("expired(); quoted = true;")
++        XCTAssertFalse(c.evaluateScript("eligible()")!.toBool())
++        c.evaluateScript("quoted = false; eligible(); clock += 4000;")
++        XCTAssertFalse(c.evaluateScript("window.__thinspaceIdleRecovery.prepare('different draft')")!.toBool())
++        c.evaluateScript("activity('input');")
++        XCTAssertFalse(c.evaluateScript("window.__thinspaceIdleRecovery.prepare('unsent draft')")!.toBool())
++        c.evaluateScript("clock += 9000;")
++        XCTAssertTrue(c.evaluateScript("window.__thinspaceIdleRecovery.prepare('unsent draft')")!.toBool())
++        XCTAssertNil(c.exception)
++    }
++}
++
++private final class IdleRecoveryNavigationDelegate: NSObject, WKNavigationDelegate {
++    var finished: (() -> Void)?
++    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finished?() }
++}
++
++final class IdleRecoveryWebKitTests: XCTestCase {
++    @MainActor
++    func testRealDOMErrorRecognitionAndDraftRestorationNeverSubmits() throws {
++        let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 500, height: 300))
++        let delegate = IdleRecoveryNavigationDelegate()
++        let loaded = expectation(description: "local recovery fixture")
++        delegate.finished = { loaded.fulfill() }
++        web.navigationDelegate = delegate
++        web.loadHTMLString("""
++        <html><body><div role="alert">WritingBlockInvalidConversationError</div>
++        <form onsubmit="window.sends++; return false"><textarea id="prompt-textarea"></textarea><button>Send</button></form>
++        <script>window.sends = 0;</script></body></html>
++        """, baseURL: nil)
++        wait(for: [loaded], timeout: 10)
++        func evaluate(_ script: String) throws -> Any? {
++            let done = expectation(description: "evaluate recovery script")
++            var output: Any?, failure: Error?
++            web.evaluateJavaScript(script) { value, error in output = value; failure = error; done.fulfill() }
++            wait(for: [done], timeout: 5)
++            if let failure { throw failure }
++            return output
++        }
++        _ = try evaluate("window.clock=10000000; Date.now=function(){return window.clock;}; window.__thinspaceDetectedPrivateChatState=false;" + UserScripts.idleRecoverySource)
++        _ = try evaluate("window.clock+=3601000; window.__thinspaceIdleRecovery.snapshot(); window.clock+=4000;")
++        let snapshot = try XCTUnwrap(try evaluate("window.__thinspaceIdleRecovery.snapshot()") as? [String: Any])
++        XCTAssertEqual(snapshot["shouldRecover"] as? Bool, true)
++        let draft = "draft with 'quotes' and a newline\nsecond line"
++        let json = String(data: try JSONSerialization.data(withJSONObject: draft, options: .fragmentsAllowed), encoding: .utf8)!
++        _ = try evaluate("window.__thinspaceIdleRecovery.restore(\(json), 'Draft restored; nothing sent.')")
++        _ = try evaluate("window.clock+=9000;")
++        XCTAssertEqual(try evaluate("window.__thinspaceIdleRecovery.restore(\(json), 'Draft restored; nothing sent.')") as? String, "restored")
++        XCTAssertEqual(try evaluate("document.querySelector('textarea').value") as? String, draft)
++        XCTAssertEqual(try evaluate("window.sends") as? Int, 0)
++        XCTAssertEqual(try evaluate("window.__thinspaceIdleRecovery.restore('another draft', 'notice')") as? String, "conflict")
++        XCTAssertEqual(try evaluate("document.querySelector('textarea').value") as? String, draft)
++        withExtendedLifetime(delegate) {}
++    }
++}
 diff --git a/Thinspace.xcodeproj/project.pbxproj b/Thinspace.xcodeproj/project.pbxproj
-index 6c19bb2..0a7af4e 100644
+index 6c19bb2..5d75a14 100644
 --- a/Thinspace.xcodeproj/project.pbxproj
 +++ b/Thinspace.xcodeproj/project.pbxproj
 @@ -313,7 +313,7 @@
@@ -811,7 +965,7 @@ index 6c19bb2..0a7af4e 100644
  				BUNDLE_LOADER = "$(TEST_HOST)";
  				CODE_SIGN_STYLE = Automatic;
 -				CURRENT_PROJECT_VERSION = 1;
-+				CURRENT_PROJECT_VERSION = 2026101903;
++				CURRENT_PROJECT_VERSION = 2026102801;
  				GENERATE_INFOPLIST_FILE = YES;
  				MACOSX_DEPLOYMENT_TARGET = 27.0;
  				MARKETING_VERSION = 1.2.2;
@@ -820,7 +974,7 @@ index 6c19bb2..0a7af4e 100644
  				BUNDLE_LOADER = "$(TEST_HOST)";
  				CODE_SIGN_STYLE = Automatic;
 -				CURRENT_PROJECT_VERSION = 1;
-+				CURRENT_PROJECT_VERSION = 2026101903;
++				CURRENT_PROJECT_VERSION = 2026102801;
  				GENERATE_INFOPLIST_FILE = YES;
  				MACOSX_DEPLOYMENT_TARGET = 27.0;
  				MARKETING_VERSION = 1.2.2;
@@ -829,7 +983,7 @@ index 6c19bb2..0a7af4e 100644
  				CODE_SIGN_STYLE = Automatic;
  				COMBINE_HIDPI_IMAGES = YES;
 -				CURRENT_PROJECT_VERSION = 1;
-+				CURRENT_PROJECT_VERSION = 2026101903;
++				CURRENT_PROJECT_VERSION = 2026102801;
  				DEAD_CODE_STRIPPING = YES;
  				ENABLE_APP_SANDBOX = NO;
  				ENABLE_FILE_ACCESS_DOWNLOADS_FOLDER = readwrite;
@@ -838,7 +992,7 @@ index 6c19bb2..0a7af4e 100644
  				CODE_SIGN_STYLE = Automatic;
  				COMBINE_HIDPI_IMAGES = YES;
 -				CURRENT_PROJECT_VERSION = 1;
-+				CURRENT_PROJECT_VERSION = 2026101903;
++				CURRENT_PROJECT_VERSION = 2026102801;
  				DEAD_CODE_STRIPPING = YES;
  				ENABLE_APP_SANDBOX = NO;
  				ENABLE_FILE_ACCESS_DOWNLOADS_FOLDER = readwrite;
@@ -856,10 +1010,10 @@ index c7b6e5a..8215e89 100644
      case panelX
      case panelY
 diff --git a/Views/MenuBarView.swift b/Views/MenuBarView.swift
-index 6b00ab8..2fadf1a 100644
+index 6b00ab8..eb8b879 100644
 --- a/Views/MenuBarView.swift
 +++ b/Views/MenuBarView.swift
-@@ -17,9 +17,11 @@ struct MenuBarView: View {
+@@ -17,15 +17,23 @@ struct MenuBarView: View {
              Button {
                  coordinator.openMainWindow()
              } label: {
@@ -872,8 +1026,20 @@ index 6b00ab8..2fadf1a 100644
              Button {
                  coordinator.toggleChatBar()
              } label: {
+                 Label("Toggle Chat Bar", systemImage: "rectangle.bottomhalf.inset.filled")
+             }
+ 
++            if coordinator.webViewModel.recoveredDraft != nil {
++                Button("Copy Recovered Draft") {
++                    coordinator.webViewModel.copyRecoveredDraft()
++                }
++            }
++
+             Divider()
+ 
+             SettingsLink {
 diff --git a/Views/Settings/ChatBarSettingsSections.swift b/Views/Settings/ChatBarSettingsSections.swift
-index 1681248..5ffdfc1 100644
+index 1681248..2010bd7 100644
 --- a/Views/Settings/ChatBarSettingsSections.swift
 +++ b/Views/Settings/ChatBarSettingsSections.swift
 @@ -15,6 +15,9 @@ struct ChatBarSettingsSections: View {
@@ -886,7 +1052,7 @@ index 1681248..5ffdfc1 100644
      @State private var isAccessibilityTrusted = false
  
      var body: some View {
-@@ -34,6 +37,20 @@ struct ChatBarSettingsSections: View {
+@@ -34,6 +37,24 @@ struct ChatBarSettingsSections: View {
                  coordinator.resetChatBarPosition()
              }
  
@@ -900,6 +1066,10 @@ index 1681248..5ffdfc1 100644
 +                .font(.caption)
 +                .foregroundStyle(.secondary)
 +
++            Text("After one hour idle, ChatGPT is checked for a persistent invalid-conversation error. Recovery waits until editing and replies stop, protects unsent text in memory, and never resends messages.")
++                .font(.caption)
++                .foregroundStyle(.secondary)
++
 +            Text("Hidden sessions stay loaded for 2 hours. Temporary Chats are kept loaded until you leave them or quit Thinspace.")
 +                .font(.caption)
 +                .foregroundStyle(.secondary)
@@ -907,8 +1077,166 @@ index 1681248..5ffdfc1 100644
              KeyboardShortcuts.Recorder("Keyboard Shortcut", name: .bringToFront)
          }
  
+diff --git a/WebKit/UserScripts.swift b/WebKit/UserScripts.swift
+index bf534ca..f484df1 100644
+--- a/WebKit/UserScripts.swift
++++ b/WebKit/UserScripts.swift
+@@ -40,6 +40,11 @@ enum UserScripts {
+             )
+         ]
+ 
++        if adapter.provider == .chatgpt {
++            scripts.append(WKUserScript(source: idleRecoverySource,
++                injectionTime: .atDocumentEnd, forMainFrameOnly: true))
++        }
++
+         #if DEBUG
+         scripts.insert(
+             WKUserScript(
+@@ -54,6 +59,125 @@ enum UserScripts {
+         return scripts
+     }
+ 
++    static let idleRecoverySource = #"""
++    (function () {
++        'use strict';
++        if (window.__thinspaceIdleRecovery) return;
++        const HOUR = 60 * 60 * 1000;
++        const ERROR = 'WritingBlockInvalidConversationError';
++        let lastActivity = Date.now(), lastEdit = 0, lastInteraction = 0;
++        let armed = false, composing = false, errorSince = null, frozen = false;
++        let restoring = null, armedResponses = 0, pageURL = window.location.href;
++        function responseCount() { return document.querySelectorAll('[data-message-author-role="assistant"]').length; }
++        function arm() { if (!armed) { armed = true; armedResponses = responseCount(); } }
++        function activity(edit) {
++            const now = Date.now();
++            if (now - lastActivity >= HOUR) arm();
++            lastActivity = now;
++            lastInteraction = now;
++            if (edit) lastEdit = now;
++        }
++        document.addEventListener('input', function () { activity(true); }, true);
++        document.addEventListener('keydown', function () { activity(true); }, true);
++        document.addEventListener('pointerdown', function () { activity(false); }, true);
++        document.addEventListener('compositionstart', function () { composing = true; activity(true); }, true);
++        document.addEventListener('compositionend', function () { composing = false; activity(true); }, true);
++        document.addEventListener('beforeinput', function (e) { if (frozen) e.preventDefault(); }, true);
++        document.addEventListener('submit', function (e) { if (frozen) e.preventDefault(); }, true);
++        function visible(e) {
++            return !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
++        }
++        function composer() {
++            return document.querySelector('#prompt-textarea, [data-testid="composer-text-input"], textarea');
++        }
++        function text(e) { return !e ? '' : ('value' in e ? e.value : e.innerText); }
++        function busy() {
++            return Array.from(document.querySelectorAll('[data-testid="stop-button"], button[aria-label*="Stop generating" i], button[aria-label*="Stop recording" i], [data-is-streaming="true"], [aria-busy="true"]')).some(visible);
++        }
++        function attachments(e) {
++            return Array.from(document.querySelectorAll('input[type="file"]')).some(function (i) { return i.files && i.files.length; }) ||
++                Array.from(document.querySelectorAll('[data-testid*="attachment"], [data-testid*="file-thumbnail"], [aria-label*="Remove file" i], [aria-label*="Remove attachment" i]')).some(visible) ||
++                !!(e && e.querySelector('img, [data-type="mention"], [data-mention], [contenteditable="false"]'));
++        }
++        function invalidConversation() {
++            // Never treat an error quoted in a user's/assistant's message as a failure.
++            return Array.from(document.querySelectorAll('[role="alert"], [class*="error"], [class*="red-"], [class*="danger"]')).some(function (e) {
++                return visible(e) && !e.closest('[data-message-author-role], .markdown, .prose') &&
++                    (e.innerText || '').trim() === ERROR;
++            });
++        }
++        function snapshot() {
++            const now = Date.now(), e = composer();
++            if (window.location.href !== pageURL) {
++                pageURL = window.location.href; armed = false; errorSince = null; lastActivity = now;
++            }
++            if (now - lastActivity >= HOUR) arm();
++            const error = invalidConversation();
++            if (armed && !error && !busy() && responseCount() > armedResponses) {
++                armed = false; lastActivity = now;
++            }
++            if (!error) errorSince = null;
++            else if (errorSince === null) errorSince = now;
++            const safe = !!e && visible(e) && !busy() && !composing &&
++                now - lastEdit >= 8000 && now - lastInteraction >= 3000 && !attachments(e);
++            const privateMode = typeof window.__thinspaceDetectedPrivateChatState === 'boolean'
++                ? window.__thinspaceDetectedPrivateChatState : null;
++            return { ready: !!e && visible(e), safe: safe, hasError: error, privateMode: privateMode,
++                shouldRecover: armed && error && now - errorSince >= 3000 && safe && privateMode !== null,
++                draft: text(e), href: window.location.href };
++        }
++        function prepare(expected) {
++            const s = snapshot();
++            if (!s.shouldRecover || s.draft !== expected) return false;
++            frozen = true;
++            return true;
++        }
++        function notice(message) {
++            if (document.getElementById('__thinspace-recovery-notice')) return;
++            const n = document.createElement('div');
++            n.id = '__thinspace-recovery-notice';
++            n.setAttribute('role', 'status');
++            n.textContent = message;
++            n.style.cssText = 'position:fixed;bottom:12px;left:12px;right:12px;z-index:2147483647;padding:10px 14px;border-radius:12px;background:rgba(35,35,35,.94);color:white;font:13px system-ui;pointer-events:none;box-shadow:0 2px 12px #0003';
++            document.body.appendChild(n);
++            setTimeout(function () { n.remove(); }, 9000);
++        }
++        function restore(value, message) {
++            const e = composer();
++            if (!e || !visible(e) || busy() || composing || Date.now() - lastInteraction < 3000) return 'waiting';
++            const current = text(e);
++            if (current === value) { notice(message); return 'restored'; }
++            if (current.trim()) return 'conflict';
++            if (attachments(e)) return 'waiting';
++            // Retry only if still empty. A successful asynchronous paste is never duplicated.
++            if (restoring === value && Date.now() - lastEdit < 1000) return 'waiting';
++            restoring = value;
++            e.focus();
++            if ('value' in e) {
++                const proto = e.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
++                Object.getOwnPropertyDescriptor(proto, 'value').set.call(e, value);
++                e.dispatchEvent(new Event('input', { bubbles: true }));
++            } else {
++                const range = document.createRange(); range.selectNodeContents(e); range.collapse(false);
++                const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
++                try {
++                    const transfer = new DataTransfer(); transfer.setData('text/plain', value);
++                    e.dispatchEvent(new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }));
++                } catch (_) {}
++                setTimeout(function () {
++                    if (!text(e).trim()) {
++                        document.execCommand('insertText', false, value);
++                        e.dispatchEvent(new Event('input', { bubbles: true }));
++                    }
++                }, 250);
++            }
++            return 'waiting';
++        }
++        window.__thinspaceIdleRecovery = { snapshot: snapshot, prepare: prepare,
++            cancel: function () { frozen = false; }, restore: restore, notice: notice };
++    })();
++    """#
++
+     private static let consoleLogBridgeSource = """
+     (function() {
+         if (window.__thinspaceConsoleBridgeInstalled) return;
+@@ -527,6 +651,7 @@ enum UserScripts {
+ 
+             let lastState = null;
+             let scheduled = false;
++            window.__thinspaceDetectedPrivateChatState = null;
+             let forcedState = null;
+             let forcedStateUntil = 0;
+             let toggleGeneration = 0;
+@@ -535,6 +660,7 @@ enum UserScripts {
+                 state = !!state;
+                 if (!force && state === lastState) return;
+                 lastState = state;
++                window.__thinspaceDetectedPrivateChatState = state;
+                 try {
+                     window.webkit.messageHandlers.\(privateChatStateHandler).postMessage({
+                         inPrivateChat: state
 diff --git a/WebKit/WebViewModel.swift b/WebKit/WebViewModel.swift
-index a670e7d..9a58973 100644
+index a670e7d..7aab484 100644
 --- a/WebKit/WebViewModel.swift
 +++ b/WebKit/WebViewModel.swift
 @@ -11,15 +11,21 @@ import WebKit
@@ -936,15 +1264,264 @@ index a670e7d..9a58973 100644
              hiddenSince = nil
              return nil
          }
-@@ -447,6 +453,7 @@ final class WebViewModel {
+@@ -29,6 +35,22 @@ struct BackgroundSessionCountdown {
+     }
+ }
+ 
++/// A retry budget, separate from the page's one-hour inactivity checkpoint.
++struct IdleRecoveryGate {
++    private(set) var lastAttemptAt: TimeInterval?
++    func canAttempt(now: TimeInterval) -> Bool {
++        lastAttemptAt.map { now - $0 >= 60 * 60 } ?? true
++    }
++    mutating func recordAttempt(now: TimeInterval) { lastAttemptAt = now }
++}
++
++private struct IdleRecoveryAttempt {
++    let draft: String
++    let wasPrivate: Bool
++    let startedAt: TimeInterval
++    var requestedPrivate = false
++}
++
+ final class ConsoleLogHandler: NSObject, WKScriptMessageHandler {
+     func userContentController(
+         _ userContentController: WKUserContentController,
+@@ -121,6 +143,12 @@ final class WebViewModel {
+     private var urlObserver: NSKeyValueObservation?
+     private var loadingObserver: NSKeyValueObservation?
+     private var inactivityTimer: Timer?
++    private var idleRecoveryTimer: Timer?
++    private var idleRecoveryProbeRunning = false
++    private var idleRecoveryGeneration = 0
++    private var idleRecoveryGate = IdleRecoveryGate()
++    private var pendingIdleRecovery: IdleRecoveryAttempt?
++    private(set) var recoveredDraft: String?
+     private var occlusionObserver: NSObjectProtocol?
+     private var backgroundCountdown = BackgroundSessionCountdown()
+     private var suspendedURL: URL?
+@@ -177,6 +205,7 @@ final class WebViewModel {
+         loadHome()
+         resetInactivityTimer()
+         observeOcclusionChanges()
++        startIdleRecoveryChecks()
+     }
+ 
+     // In practice this never runs: the one instance is owned by
+@@ -186,6 +215,7 @@ final class WebViewModel {
+     deinit {
+         MainActor.assumeIsolated {
+             inactivityTimer?.invalidate()
++            idleRecoveryTimer?.invalidate()
+             if let occlusionObserver {
+                 NotificationCenter.default.removeObserver(occlusionObserver)
+             }
+@@ -199,6 +229,7 @@ final class WebViewModel {
+     /// Tears down the current provider's only WebView, then creates the selected
+     /// provider at its home page. Only cookies/site data survive via its data store.
+     func switchProvider(to newProvider: LLMProvider) {
++        cancelPendingIdleRecovery()
+         resetInactivityTimer()
+         guard newProvider != provider else {
+             resumeIfSuspended()
+@@ -229,6 +260,8 @@ final class WebViewModel {
+     /// Removes website records for every provider store and rebuilds the
+     /// active session so no authenticated in-memory page survives the reset.
+     func clearAllWebsiteData(completion: @escaping () -> Void = {}) {
++        cancelPendingIdleRecovery()
++        recoveredDraft = nil
+         let group = DispatchGroup()
+         let dataTypes = WKWebsiteDataStore.allWebsiteDataTypes()
+ 
+@@ -253,6 +286,7 @@ final class WebViewModel {
+     // MARK: - Navigation and provider actions
+ 
+     func loadHome() {
++        cancelPendingIdleRecovery()
+         resumeIfSuspended()
+         pendingPrivateChatProvider = nil
+         isAtHome = true
+@@ -267,6 +301,7 @@ final class WebViewModel {
+     // chat unprompted the next time the user happened to reach a home surface.
+ 
+     func goBack() {
++        cancelPendingIdleRecovery()
+         resumeIfSuspended()
+         guard wkWebView.canGoBack else { return }
+         pendingPrivateChatProvider = nil
+@@ -275,6 +310,7 @@ final class WebViewModel {
+     }
+ 
+     func goForward() {
++        cancelPendingIdleRecovery()
+         resumeIfSuspended()
+         guard wkWebView.canGoForward else { return }
+         pendingPrivateChatProvider = nil
+@@ -282,12 +318,14 @@ final class WebViewModel {
+     }
+ 
+     func reload() {
++        cancelPendingIdleRecovery()
+         resumeIfSuspended()
+         pendingPrivateChatProvider = nil
+         wkWebView.reload()
+     }
+ 
+     func openNewChat() {
++        cancelPendingIdleRecovery()
+         resumeIfSuspended()
+         pendingPrivateChatProvider = nil
+         let wasInPrivateChat = isInPrivateChat
+@@ -300,6 +338,7 @@ final class WebViewModel {
+     }
+ 
+     func openPrivateChat() {
++        cancelPendingIdleRecovery()
+         resumeIfSuspended()
+         guard capabilities.contains(.privateChat) else { return }
+         guard !isInPrivateChat else { return }
+@@ -447,6 +486,140 @@ final class WebViewModel {
          guard isInPrivateChat != inPrivateChat else { return }
          isInPrivateChat = inPrivateChat
          onPrivateChatStateChanged?(inPrivateChat)
 +        resetInactivityTimer()
++    }
++
++    // MARK: - Recovery from stale ChatGPT pages after a long idle period
++
++    private var hasVisibleRecoveryHost: Bool {
++        hosts.contains { entry in
++            guard let host = entry.value, host.webView === wkWebView,
++                  wkWebView.superview === host, let window = host.window else { return false }
++            return window.isVisible && !window.isMiniaturized && window.occlusionState.contains(.visible)
++        }
++    }
++
++    private func startIdleRecoveryChecks() {
++        idleRecoveryTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
++            MainActor.assumeIsolated { self?.checkIdleRecovery() }
++        }
++    }
++
++    private func cancelPendingIdleRecovery() {
++        idleRecoveryGeneration += 1
++        pendingIdleRecovery = nil
++        // The backup remains available through the explicit Copy command.
++    }
++
++    func copyRecoveredDraft() {
++        guard let recoveredDraft else { return }
++        NSPasteboard.general.clearContents()
++        if NSPasteboard.general.setString(recoveredDraft, forType: .string) {
++            self.recoveredDraft = nil
++        }
++    }
++
++    private func checkIdleRecovery() {
++        guard provider == .chatgpt, !isSuspended, !wkWebView.isLoading,
++              hasVisibleRecoveryHost, !idleRecoveryProbeRunning,
++              let url = wkWebView.url, adapter.applicationHosts.contains(url.host ?? "") else { return }
++        let page = wkWebView
++        let generation = idleRecoveryGeneration
++        idleRecoveryProbeRunning = true
++        page.evaluateJavaScript("window.__thinspaceIdleRecovery?.snapshot()") { [weak self, weak page] result, _ in
++            guard let self else { return }
++            self.idleRecoveryProbeRunning = false
++            guard let page, page === self.wkWebView, generation == self.idleRecoveryGeneration,
++                  !page.isLoading, page.url == url, self.hasVisibleRecoveryHost,
++                  let snapshot = result as? [String: Any] else { return }
++            if let pending = self.pendingIdleRecovery {
++                if Date.timeIntervalSinceReferenceDate - pending.startedAt > 60 {
++                    if snapshot["safe"] as? Bool == true {
++                        self.pendingIdleRecovery = nil
++                        self.showIdleRecoveryIssue()
++                    }
++                } else { self.finishIdleRecovery(snapshot: snapshot) }
++                return
++            }
++            guard self.recoveredDraft == nil, snapshot["shouldRecover"] as? Bool == true,
++                  let draft = snapshot["draft"] as? String,
++                  self.idleRecoveryGate.canAttempt(now: Date.timeIntervalSinceReferenceDate),
++                  let payload = Self.javascriptString(draft) else { return }
++            // Recheck in the page immediately before freezing and reloading:
++            // an intervening edit, reply, attachment or navigation cancels it.
++            self.idleRecoveryProbeRunning = true
++            page.evaluateJavaScript("window.__thinspaceIdleRecovery?.prepare(\(payload))") { [weak self, weak page] prepared, _ in
++                guard let self else { return }
++                self.idleRecoveryProbeRunning = false
++                guard let page, page === self.wkWebView else { return }
++                guard generation == self.idleRecoveryGeneration, page.url == url,
++                      !page.isLoading, self.hasVisibleRecoveryHost, prepared as? Bool == true else {
++                    page.evaluateJavaScript("window.__thinspaceIdleRecovery?.cancel()", completionHandler: nil)
++                    return
++                }
++                self.idleRecoveryGate.recordAttempt(now: Date.timeIntervalSinceReferenceDate)
++                self.recoveredDraft = draft.isEmpty ? nil : draft
++                self.pendingIdleRecovery = IdleRecoveryAttempt(draft: draft, wasPrivate: self.isInPrivateChat || snapshot["privateMode"] as? Bool == true,
++                    startedAt: Date.timeIntervalSinceReferenceDate)
++                page.reload()
++            }
++        }
++    }
++
++    private func finishIdleRecovery(snapshot: [String: Any]) {
++        guard var attempt = pendingIdleRecovery, snapshot["ready"] as? Bool == true else { return }
++        // Never insert a private draft into a regular conversation. If the
++        // old temporary page cannot resume, explicitly create a fresh private one.
++        if attempt.wasPrivate && snapshot["privateMode"] as? Bool == nil { return }
++        if attempt.wasPrivate && (snapshot["privateMode"] as? Bool != true || snapshot["hasError"] as? Bool == true) {
++            guard !attempt.requestedPrivate else { return }
++            attempt.requestedPrivate = true
++            pendingIdleRecovery = attempt
++            pendingPrivateChatProvider = provider
++            wkWebView.load(URLRequest(url: adapter.homeURL))
++            return
++        }
++        guard snapshot["safe"] as? Bool == true else { return }
++        guard snapshot["hasError"] as? Bool != true else {
++            pendingIdleRecovery = nil
++            showIdleRecoveryIssue()
++            return
++        }
++        let message = attempt.requestedPrivate
++            ? "A fresh Temporary Chat was opened after the idle error. Unsent text restored; nothing sent."
++            : (attempt.wasPrivate
++                ? "Temporary Chat refreshed after an idle error. The previous session may have restarted. Nothing was sent."
++                : "Chat refreshed after an idle error. Unsent text restored; nothing sent.")
++        guard let text = Self.javascriptString(attempt.draft), let notice = Self.javascriptString(message) else { return }
++        let generation = idleRecoveryGeneration
++        idleRecoveryProbeRunning = true
++        wkWebView.evaluateJavaScript("window.__thinspaceIdleRecovery?.restore(\(text), \(notice))") { [weak self] result, _ in
++            guard let self else { return }
++            self.idleRecoveryProbeRunning = false
++            guard generation == self.idleRecoveryGeneration else { return }
++            if result as? String == "restored" {
++                self.pendingIdleRecovery = nil
++                self.recoveredDraft = nil
++            } else if result as? String == "conflict" {
++                self.pendingIdleRecovery = nil
++                self.showIdleRecoveryIssue()
++            }
++        }
++    }
++
++    private func showIdleRecoveryIssue() {
++        let alert = NSAlert()
++        alert.messageText = "The idle chat could not be fully recovered"
++        alert.informativeText = recoveredDraft == nil
++            ? "ChatGPT may no longer accept that conversation. No message was resent. You can start a new chat."
++            : "Your unsent text is kept in memory. Use Copy Recovered Draft in the Thinspace menu to retrieve it. Nothing was resent."
++        alert.addButton(withTitle: "OK")
++        if let window = wkWebView.window { alert.beginSheetModal(for: window, completionHandler: nil) }
++    }
++
++    private static func javascriptString(_ value: String) -> String? {
++        guard let data = try? JSONSerialization.data(withJSONObject: value, options: .fragmentsAllowed) else { return nil }
++        return String(data: data, encoding: .utf8)
      }
  
      // MARK: - Inactivity suspension
-@@ -464,6 +471,7 @@ final class WebViewModel {
+@@ -464,6 +637,7 @@ final class WebViewModel {
          guard !isSuspended else { return }
          guard let remaining = backgroundCountdown.remainingTime(
              isVisible: hasObservableWindow,
